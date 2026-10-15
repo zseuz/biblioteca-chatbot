@@ -1,0 +1,69 @@
+package com.biblioteca.chatbot.controller;
+
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+/**
+ * Endpoints con la aplicación completa arrancada, sin clave de Claude y con la biblioteca
+ * apuntando a un puerto donde no hay nada (ver {@code src/test/resources/application.properties}).
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class ChatControllerTest {
+
+    @Autowired
+    private MockMvc mvc;
+
+    /** Sin clave de API: 503 con un mensaje que explica qué configurar. */
+    @Test
+    void withoutApiKeyRespondsServiceUnavailable() throws Exception {
+        mvc.perform(post("/api/chat").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"messages\":[{\"role\":\"user\",\"content\":\"¿Hay libros de Dune?\"}]}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value(containsString("ANTHROPIC_API_KEY")));
+    }
+
+    /** Conversación vacía, rol desconocido, mensaje en blanco o que no termina en el usuario → 400. */
+    @Test
+    void validatesRequest() throws Exception {
+        for (String body : new String[] {
+                "{\"messages\":[]}",
+                "{\"messages\":[{\"role\":\"system\",\"content\":\"hola\"}]}",
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"  \"}]}",
+                "no es json"}) {
+            mvc.perform(post("/api/chat").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    /** El estado indica que falta la clave y que la biblioteca no responde. */
+    @Test
+    void statusReportsMissingKeyAndUnreachableBiblioteca() throws Exception {
+        mvc.perform(get("/api/chat/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claudeConfigured").value(false))
+                .andExpect(jsonPath("$.bibliotecaAvailable").value(false));
+    }
+
+    /** CORS: el frontend en el puerto 4201 puede llamar a la API. */
+    @Test
+    void allowsFrontendOrigin() throws Exception {
+        mvc.perform(options("/api/chat")
+                        .header("Origin", "http://localhost:4201")
+                        .header("Access-Control-Request-Method", "POST"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:4201"));
+    }
+}
