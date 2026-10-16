@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/chat")
 public class ChatController {
 
-    /** Servicio que conversa con Claude y consulta la biblioteca. */
+    /** Servicio que interpreta las preguntas y consulta la biblioteca. */
     private final ChatService service;
 
     /** Spring inyecta el servicio por constructor. */
@@ -29,14 +29,14 @@ public class ChatController {
 
     /**
      * POST /api/chat → respuesta del asistente al último mensaje de la conversación.
-     * 400 si la conversación no es válida; 503 si Claude no está configurado o no responde.
+     * 400 si la conversación no es válida; 503 si la API de la biblioteca no responde.
      */
     @PostMapping
     public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
         return service.reply(request.messages());
     }
 
-    /** GET /api/chat/status → si hay clave de Claude y si la API de la biblioteca responde. */
+    /** GET /api/chat/status → si la API de la biblioteca responde. */
     @GetMapping("/status")
     public ChatStatus status() {
         return service.status();

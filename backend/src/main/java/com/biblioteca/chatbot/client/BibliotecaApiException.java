@@ -1,8 +1,8 @@
 package com.biblioteca.chatbot.client;
 
 /**
- * La API de la biblioteca rechazó una consulta o no respondió. El mensaje se le pasa a Claude
- * como resultado de error de la herramienta, para que lo explique al usuario.
+ * La API de la biblioteca rechazó una consulta o no respondió. El controlador la convierte en
+ * un 503 cuyo mensaje se muestra en el chat con la opción de reintentar.
  */
 public class BibliotecaApiException extends RuntimeException {
 

@@ -1,51 +1,68 @@
 # Asistente de la Biblioteca
 
-Chatbot que responde preguntas en lenguaje natural sobre el **Sistema de Biblioteca** (*«¿qué préstamos están vencidos?»*, *«¿quedan ejemplares de Dune?»*, *«¿quién tiene más préstamos activos?»*). Usa Claude (API de Anthropic) y consulta los datos reales a través de la API REST de la biblioteca. **Solo consulta**: no presta, devuelve ni modifica nada.
+Chatbot que responde preguntas escritas en español sobre el **Sistema de Biblioteca**: *«¿qué préstamos están vencidos?»*, *«¿quedan ejemplares de Dune?»*, *«¿qué libros tiene prestados Ana?»*. Consulta los datos reales a través de la API REST de la biblioteca.
+
+**No usa IA ni servicios de pago:** interpreta cada pregunta con reglas de palabras clave, así que es gratis, responde al instante y funciona sin internet. **Solo consulta**: no presta, devuelve ni modifica nada.
 
 | Capa | Tecnología | Puerto |
 |---|---|---|
 | Frontend (vista) | Angular 22 | 4201 |
-| Backend (modelo y controladores) | Spring Boot 4.1 (Spring MVC), Java 21, SDK de Anthropic | 8081 |
-| Datos | API del proyecto `biblioteca` (no tiene base de datos propia) | 8080 |
+| Backend (modelo y controladores) | Spring Boot 4.1 (Spring MVC), Java 21 | 8081 |
+| Datos | API del proyecto `biblioteca` (el chatbot no tiene base de datos propia) | 8080 |
+
+---
+
+## Qué se le puede preguntar
+
+| Pregunta (ejemplos) | Qué responde |
+|---|---|
+| *¿Qué préstamos están vencidos?* · *Préstamos atrasados de María* | Préstamos vencidos con los días de retraso, de todos o de un usuario o libro |
+| *¿Hay ejemplares de Dune?* · *¿Está disponible 1984?* | Disponibilidad de un libro (ejemplares libres de los totales) |
+| *¿Qué libros de ciencia ficción hay disponibles?* · *Libros de García Márquez* | Búsqueda por título, autor o género, con disponibilidad |
+| *¿Qué libros tiene prestados Ana?* · *¿Cuántos préstamos tiene Luis?* | Libros sin devolver de un usuario (marcando los vencidos) y su total histórico |
+| *¿Quién tiene Cien años de soledad?* | Quién tiene prestado ahora ese libro y hasta cuándo |
+| *¿Quién tiene más préstamos activos?* · *¿Quién tiene más préstamos?* | Ranking de usuarios por préstamos actuales o totales |
+| *¿Cuáles son los libros más prestados?* · *Géneros más populares* | Rankings del panel de estadísticas |
+| *Estadísticas* · *¿Cuántos libros hay?* | Totales de libros, usuarios y préstamos |
+| *Préstamos en plazo* · *¿Qué libros hay disponibles?* · *Lista de usuarios* | Listados |
+| *¿Cuánto dura un préstamo?* · *¿Cuándo se puede renovar?* | Reglas de préstamo |
+| *Presta Dune a Ana* | Explica que solo consulta y en qué pantalla de la biblioteca hacerlo |
+| *Hola* · *ayuda* | Saludo y lista de ejemplos |
+
+No distingue mayúsculas ni tildes («garcia marquez» encuentra «García Márquez»). Si una pregunta no encaja en ninguna regla, el texto se busca como título, autor, género o nombre de usuario. Si tampoco hay coincidencias, el asistente lo dice y sugiere cómo preguntar.
 
 ---
 
 ## Arquitectura MVC
 
 ```text
- Navegador                 biblioteca-chatbot                          biblioteca
-┌───────────────┐  POST   ┌───────────────────────────────────────┐   GET  ┌──────────────┐
-│ VISTA         │ /api/   │ CONTROLADOR  ChatController           │ /api/  │ API REST     │
-│ Angular 4201  │ ──────► │      │                                │ ─────► │ Spring 8080  │
-│ app.ts        │  chat   │      ▼                                │ books  │ (libros,     │
-│ chat.component│ ◄────── │ SERVICIO     ChatService ◄──► Claude  │ loans  │  usuarios,   │
-│               │  reply  │      │       (bucle de herramientas)  │ members│  préstamos)  │
-│ ChatService   │         │      ▼                                │ stats  │              │
-│ (estado)      │         │              LibraryTools             │        │              │
-└───────────────┘         │              BibliotecaApiClient ─────┼───────►│              │
-                          │ MODELO       ChatMessage, ChatRequest,│        └──────────────┘
-                          │              ChatResponse, ChatStatus │
-                          └───────────────────────────────────────┘
+ Navegador                 biblioteca-chatbot                               biblioteca
+┌────────────────┐  POST  ┌────────────────────────────────────────────┐ GET  ┌──────────────┐
+│ VISTA          │ /api/  │ CONTROLADOR  ChatController                │/api/ │ API REST     │
+│ Angular 4201   │ ─────► │      │                                     │────► │ Spring 8080  │
+│ app.ts         │  chat  │      ▼                                     │books │ (libros,     │
+│ chat.component │ ◄───── │ SERVICIOS    IntentClassifier → Question   │loans │  usuarios,   │
+│                │  reply │              ChatService (redacta)         │members│ préstamos)   │
+│ ChatService    │        │      │                                     │stats │              │
+│ (estado)       │        │ CLIENTE      BibliotecaApiClient ──────────┼────► │              │
+└────────────────┘        │ MODELO       Book, Loan, Member, Stats,    │      └──────────────┘
+                          │              Intent, Question, ChatMessage…│
+                          └────────────────────────────────────────────┘
 ```
 
-- **Modelo** (`backend/.../model`): los datos que viajan entre vista y controlador (`ChatMessage`, `ChatRequest`, `ChatResponse`, `ChatStatus`). En el frontend, las mismas formas están en `core/models.ts`.
+- **Modelo** (`backend/.../model`): los datos de la biblioteca (`Book`, `Loan`, `LoanPage`, `Member`, `Stats`), la pregunta interpretada (`Intent`, `Question`) y los mensajes del chat (`ChatMessage`, `ChatRequest`, `ChatResponse`, `ChatStatus`). En el frontend, las formas del chat están en `core/models.ts`.
 - **Vista** (`frontend`): Angular muestra la conversación. `ChatService` guarda el estado (mensajes, carga, error) y los componentes `App` y `ChatComponent` solo lo pintan y le pasan lo que hace la persona.
-- **Controlador** (`backend/.../controller/ChatController`): recibe las peticiones HTTP, valida el modelo y delega en los servicios.
-- **Servicios** (`service`): `ChatService` conversa con Claude; cuando Claude necesita datos pide una herramienta (`LibraryTools`), que los obtiene de la biblioteca con `BibliotecaApiClient` (`client`).
+- **Controlador** (`controller/ChatController`): recibe las peticiones HTTP, valida el modelo y delega en los servicios.
+- **Servicios** (`service`): `IntentClassifier` interpreta la pregunta; `ChatService` consulta la biblioteca con `BibliotecaApiClient` (`client`) y redacta la respuesta.
 
-### Cómo se responde una pregunta
+### Cómo se interpreta una pregunta
 
-1. La vista envía toda la conversación a `POST /api/chat` (el servidor no guarda estado).
-2. `ChatService` se la pasa a Claude junto con las herramientas disponibles.
-3. Si Claude pide una herramienta (p. ej. `buscar_prestamos` con estado `OVERDUE`), se llama a la API de la biblioteca y se le devuelve el resultado. Esto se repite hasta que Claude responde con texto (máximo `chat.max-tool-rounds` consultas).
-4. La respuesta, en texto plano, vuelve a la vista.
+1. **Normalizar:** minúsculas, sin tildes ni signos. *«¿Qué libros tiene prestados Ana?»* → `que libros tiene prestados ana`.
+2. **Intención:** se comprueban reglas de palabras clave de la más concreta a la más general: saludo, ayuda, reglas, acciones, vencidos, rankings, estadísticas, préstamos de alguien, búsqueda…
+3. **Sujeto:** se quitan las palabras de relleno (*qué, hay, libros, préstamos, de…*) del principio y del final, y lo que queda es el nombre, título, autor o género (*Ana*). Solo se recortan los extremos, para no romper títulos como *Cien años **de** soledad*.
+4. **Responder:** `ChatService` hace las consultas necesarias a la API de la biblioteca y redacta el texto. Cuando hay un nombre, primero se comprueba si es un usuario y después si es un libro, o al revés según la pregunta.
 
-| Herramienta | Llama a | Para |
-|---|---|---|
-| `buscar_libros` | `GET /api/books?q=` | Catálogo y ejemplares disponibles |
-| `buscar_prestamos` | `GET /api/loans?status=&q=&page=&size=20` | Historial por estado (en plazo, vencido, devuelto) |
-| `buscar_usuarios` | `GET /api/members` (filtrado en el chatbot) | Usuarios y sus préstamos activos / totales |
-| `estadisticas` | `GET /api/stats` | Totales y rankings |
+Para añadir un tipo de pregunta nuevo: añade un valor a `Intent`, una regla en `IntentClassifier.classify` y su respuesta en `ChatService.reply`, con un caso en `IntentClassifierTest` y otro en `ChatServiceTest`.
 
 ---
 
@@ -54,7 +71,6 @@ Chatbot que responde preguntas en lenguaje natural sobre el **Sistema de Bibliot
 - **JDK 21 o superior** (`java -version`).
 - **Node 22.22+ LTS o 24.15+** (`node -v`).
 - El proyecto **`biblioteca`** en marcha (su backend en el puerto 8080).
-- Una **clave de la API de Claude** ([console.anthropic.com](https://console.anthropic.com/)). Sin ella todo arranca, pero el asistente responde que no está configurado.
 
 ---
 
@@ -68,13 +84,13 @@ Necesitas tres terminales.
 .\mvnw.cmd spring-boot:run
 ```
 
-**Terminal 2 — backend del asistente** (desde `biblioteca-chatbot/backend`). Define primero la clave en la misma terminal:
+**Terminal 2 — backend del asistente** (desde `biblioteca-chatbot/backend`):
 
-| Sistema | Clave | Arrancar |
-|---|---|---|
-| Windows (PowerShell) | `$env:ANTHROPIC_API_KEY="tu-clave"` | `.\mvnw.cmd spring-boot:run` |
-| Windows (CMD) | `set ANTHROPIC_API_KEY=tu-clave` | `mvnw.cmd spring-boot:run` |
-| macOS / Linux | `export ANTHROPIC_API_KEY=tu-clave` | `./mvnw spring-boot:run` |
+| Sistema | Comando |
+|---|---|
+| Windows (PowerShell) | `.\mvnw.cmd spring-boot:run` |
+| Windows (CMD) | `mvnw.cmd spring-boot:run` |
+| macOS / Linux | `./mvnw spring-boot:run` |
 
 Está listo cuando muestra `Tomcat started on port 8081`.
 
@@ -88,9 +104,7 @@ npm install
 npm start
 ```
 
-Abre **http://localhost:4201**. Si falta algo (la clave, la biblioteca o el propio servidor del asistente), la página lo indica con un aviso arriba.
-
-> Cada pregunta consume tokens de tu cuenta de Anthropic. La clave solo la usa el servidor: nunca llega al navegador. No la guardes en `application.properties` ni la subas a un repositorio.
+Abre **http://localhost:4201**. Si la biblioteca o el servidor del asistente no responden, la página lo indica con un aviso arriba.
 
 ---
 
@@ -100,10 +114,10 @@ URL base: `http://localhost:8081/api`
 
 | Método | Ruta | Descripción | Respuestas |
 |---|---|---|---|
-| `POST` | `/chat` | `{messages: [{role: "user" \| "assistant", content}]}` (el último, del usuario; máximo 2000 caracteres por mensaje) → `{reply}` | 200 · 400 · 503 |
-| `GET` | `/chat/status` | `{claudeConfigured, bibliotecaAvailable}` | 200 |
+| `POST` | `/chat` | `{messages: [{role: "user" \| "assistant", content}]}` → `{reply}`. Se responde al último mensaje, que debe ser del usuario (máximo 2000 caracteres) | 200 · 400 · 503 |
+| `GET` | `/chat/status` | `{bibliotecaAvailable}` | 200 |
 
-Los errores usan el mismo formato que la biblioteca: `{timestamp, status, message, path, fields?}`. `503` significa que falta la clave o que la API de Claude no responde. Si la **biblioteca** no responde, el asistente lo explica en su respuesta.
+Los errores usan el mismo formato que la biblioteca: `{timestamp, status, message, path, fields?}`. `503` significa que la API de la biblioteca no responde o rechazó la consulta. Las preguntas que no necesitan datos, como las reglas o la ayuda, se responden aunque la biblioteca esté apagada.
 
 ---
 
@@ -114,10 +128,6 @@ Los errores usan el mismo formato que la biblioteca: `{timestamp, status, messag
 | Propiedad | Por defecto | Variable | Descripción |
 |---|---|---|---|
 | `server.port` | `8081` | `SERVER_PORT` | Puerto del backend del asistente |
-| `chat.api-key` | *(vacía)* | `ANTHROPIC_API_KEY` | Clave de la API de Claude |
-| `chat.model` | `claude-opus-5-5` | `CHAT_MODEL` | Modelo de Claude |
-| `chat.max-tool-rounds` | `6` | `CHAT_MAX_TOOL_ROUNDS` | Consultas a la biblioteca por respuesta |
-| `chat.max-history` | `20` | `CHAT_MAX_HISTORY` | Mensajes recientes que se envían como contexto |
 | `biblioteca.base-url` | `http://localhost:8080/api` | `BIBLIOTECA_API_URL` | API de la biblioteca |
 | `biblioteca.timeout` | `10s` | `BIBLIOTECA_TIMEOUT` | Espera máxima por consulta |
 | `biblioteca.loan-days` / `max-active-loans` / `renewal-window-days` | `14` / `3` / `5` | `BIBLIOTECA_LOAN_DAYS`… | Reglas de préstamo que explica el asistente. Deben coincidir con `library.loans.*` de la biblioteca (su API no las publica) |
@@ -131,10 +141,10 @@ La URL del backend que usa el frontend está en `frontend/src/app/core/chat-api.
 
 | Proyecto | Comando | Qué cubre |
 |---|---|---|
-| Backend (22 tests) | `cd backend` y `.\mvnw.cmd test` | Bucle de herramientas con respuestas de Claude simuladas (herramienta → resultado → respuesta, errores, tope de vueltas, rechazos, historial), herramientas contra una API de biblioteca simulada (URLs, codificación, recorte a 20, filtro de usuarios sin tildes, errores) y endpoints (validación, 503 sin clave, estado, CORS) |
-| Frontend (11 tests) | `cd frontend` y `npm test -- --watch=false` | Estado de la conversación, errores y reintento, avisos de configuración, sugerencias, Enter / Mayús+Enter, respuesta como texto plano y nueva conversación |
+| Backend (65 tests) | `cd backend` y `.\mvnw.cmd test` | Interpretación de 32 preguntas de ejemplo (intención y sujeto), respuestas con la biblioteca simulada (vencidos, disponibilidad, préstamos de un usuario, quién tiene un libro, rankings, listas largas, usuarios ambiguos), cliente contra un servidor simulado (URLs, JSON, errores) y endpoints (validación, 503, estado, CORS) |
+| Frontend (10 tests) | `cd frontend` y `npm test -- --watch=false` | Estado de la conversación, errores y reintento, aviso de biblioteca caída, sugerencias, Enter / Mayús+Enter, respuesta como texto plano y nueva conversación |
 
-Las pruebas **nunca** llaman a Claude ni a la biblioteca reales.
+Las pruebas **nunca** llaman a la biblioteca real.
 
 ---
 
@@ -146,15 +156,15 @@ biblioteca-chatbot/
 │   ├── pom.xml
 │   └── src/main/java/com/biblioteca/chatbot/
 │       ├── ChatbotApplication.java
-│       ├── model/          ChatMessage, ChatRequest, ChatResponse, ChatStatus
+│       ├── model/          Book, Loan, LoanPage, Member, Stats, Intent, Question, ChatMessage…
 │       ├── controller/     ChatController
-│       ├── service/        ChatService (Claude), LibraryTools (herramientas)
+│       ├── service/        IntentClassifier (interpreta), ChatService (responde)
 │       ├── client/         BibliotecaApiClient (API de la biblioteca)
-│       ├── config/         AppConfig, ChatProperties, BibliotecaProperties
+│       ├── config/         AppConfig, BibliotecaProperties
 │       └── exception/      Errores y manejador global
 └── frontend/
     └── src/app/
-        ├── app.ts                  Cabecera, avisos de estado y tema
+        ├── app.ts                  Cabecera, aviso de estado y tema
         ├── chat/chat.component.ts  Conversación y campo de texto
         ├── core/                   Modelos, ChatApiService (HTTP), ChatService (estado), tema
         └── shared/icon.component.ts
@@ -166,8 +176,8 @@ biblioteca-chatbot/
 
 | Síntoma | Solución |
 |---|---|
-| Aviso *"Falta la clave de Claude"* | Define `ANTHROPIC_API_KEY` en la terminal 2 y reinicia el backend del asistente |
 | Aviso *"La API de la biblioteca no responde"* | Arranca el backend de `biblioteca` (terminal 1) |
 | Aviso *"No se pudo conectar con el servidor del asistente"* | Arranca el backend del asistente (terminal 2) y recarga |
-| *"La clave de la API de Claude no es válida"* | Revisa la clave y el saldo en console.anthropic.com |
-| `Port 8081 was already in use` | Cierra la otra instancia o usa `SERVER_PORT=8082` (y cambia `API_URL` en el frontend) |
+| Sigue apareciendo un mensaje sobre `ANTHROPIC_API_KEY` | Está corriendo una versión anterior del backend del asistente: detenla (`Ctrl + C`) y arráncala de nuevo |
+| `Port 8081 was already in use` | Ya hay otra instancia del asistente abierta: ciérrala, o usa `SERVER_PORT=8082` (y cambia `API_URL` en el frontend) |
+| El asistente no entiende una pregunta | Escribe «ayuda» para ver ejemplos, o pregunta solo por el título, autor o nombre |

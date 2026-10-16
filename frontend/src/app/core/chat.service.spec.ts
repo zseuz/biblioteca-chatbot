@@ -54,15 +54,13 @@ describe('ChatService', () => {
     http
       .expectOne(`${API_URL}/chat`)
       .flush(
-        { message: 'El asistente no está configurado' },
+        { message: 'No se pudo conectar con la API de la biblioteca' },
         { status: 503, statusText: 'Service Unavailable' },
       );
-    http
-      .expectOne(`${API_URL}/chat/status`)
-      .flush({ claudeConfigured: false, bibliotecaAvailable: true });
+    http.expectOne(`${API_URL}/chat/status`).flush({ bibliotecaAvailable: false });
 
-    expect(chat.error()).toBe('El asistente no está configurado');
-    expect(chat.status()).toEqual({ claudeConfigured: false, bibliotecaAvailable: true });
+    expect(chat.error()).toBe('No se pudo conectar con la API de la biblioteca');
+    expect(chat.status()).toEqual({ bibliotecaAvailable: false });
 
     chat.retry();
     const retry = http.expectOne(`${API_URL}/chat`);

@@ -27,7 +27,7 @@ export class ChatService {
   /** Hay conversación que se pueda reiniciar. */
   readonly hasMessages = computed(() => this.messages().length > 0);
 
-  /** Pide al servidor si tiene clave de Claude y si la biblioteca responde. */
+  /** Pide al servidor si la API de la biblioteca responde. */
   refreshStatus(): void {
     this.api.status().subscribe({
       next: (s) => {

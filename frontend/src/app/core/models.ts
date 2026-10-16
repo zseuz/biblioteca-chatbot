@@ -19,8 +19,6 @@ export interface ChatReply {
 
 /** Respuesta de GET /api/chat/status. */
 export interface ChatStatus {
-  /** Hay clave de la API de Claude en el servidor. */
-  claudeConfigured: boolean;
   /** La API de la biblioteca responde. */
   bibliotecaAvailable: boolean;
 }

@@ -25,7 +25,7 @@ export class ChatApiService {
     return this.http.post<ChatReply>(`${API_URL}/chat`, { messages });
   }
 
-  /** GET /chat/status: si el servidor tiene clave de Claude y si la biblioteca responde. */
+  /** GET /chat/status: si la API de la biblioteca responde. */
   status(): Observable<ChatStatus> {
     return this.http.get<ChatStatus>(`${API_URL}/chat/status`);
   }

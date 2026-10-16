@@ -55,20 +55,11 @@ import { IconComponent } from './shared/icon.component';
         No se pudo conectar con el servidor del asistente (puerto 8081). Arráncalo y recarga la
         página.
       </p>
-    } @else if (chat.status(); as s) {
-      @if (!s.claudeConfigured) {
-        <p class="status-banner warn" role="status">
-          <app-icon name="alert" [size]="16" />
-          Falta la clave de Claude: define ANTHROPIC_API_KEY antes de arrancar el servidor del
-          asistente.
-        </p>
-      } @else if (!s.bibliotecaAvailable) {
-        <p class="status-banner warn" role="status">
-          <app-icon name="alert" [size]="16" />
-          La API de la biblioteca no responde (puerto 8080). Arranca su backend para consultar
-          datos.
-        </p>
-      }
+    } @else if (chat.status()?.bibliotecaAvailable === false) {
+      <p class="status-banner warn" role="status">
+        <app-icon name="alert" [size]="16" />
+        La API de la biblioteca no responde (puerto 8080). Arranca su backend para consultar datos.
+      </p>
     }
 
     <app-chat />

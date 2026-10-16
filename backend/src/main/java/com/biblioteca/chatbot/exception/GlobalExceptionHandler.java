@@ -1,5 +1,6 @@
 package com.biblioteca.chatbot.exception;
 
+import com.biblioteca.chatbot.client.BibliotecaApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -44,9 +45,9 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, "El cuerpo de la petición no es JSON válido", req, null);
     }
 
-    /** Claude sin configurar o sin respuesta → 503 con el motivo. */
-    @ExceptionHandler(ServiceUnavailableException.class)
-    ResponseEntity<ApiError> unavailable(ServiceUnavailableException ex, HttpServletRequest req) {
+    /** La API de la biblioteca no responde o rechazó la consulta → 503 con el motivo. */
+    @ExceptionHandler(BibliotecaApiException.class)
+    ResponseEntity<ApiError> unavailable(BibliotecaApiException ex, HttpServletRequest req) {
         return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), req, null);
     }
 

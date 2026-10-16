@@ -22,7 +22,7 @@ describe('App', () => {
   afterEach(() => http.verify());
 
   /** Monta la app respondiendo al estado inicial del servidor. */
-  async function setup(status = { claudeConfigured: true, bibliotecaAvailable: true }) {
+  async function setup(status = { bibliotecaAvailable: true }) {
     const fixture = TestBed.createComponent(App);
     const el = fixture.nativeElement as HTMLElement;
     await fixture.whenStable();
@@ -51,13 +51,8 @@ describe('App', () => {
     expect(el.querySelector('.status-banner')).toBeNull();
   });
 
-  it('avisa si falta la clave de Claude', async () => {
-    const { el } = await setup({ claudeConfigured: false, bibliotecaAvailable: true });
-    expect(el.querySelector('.status-banner')?.textContent).toContain('ANTHROPIC_API_KEY');
-  });
-
   it('avisa si la biblioteca no responde', async () => {
-    const { el } = await setup({ claudeConfigured: true, bibliotecaAvailable: false });
+    const { el } = await setup({ bibliotecaAvailable: false });
     expect(el.querySelector('.status-banner')?.textContent).toContain('biblioteca no responde');
   });
 

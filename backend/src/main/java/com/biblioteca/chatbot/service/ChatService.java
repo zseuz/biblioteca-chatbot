@@ -1,281 +1,341 @@
 package com.biblioteca.chatbot.service;
 
-import com.anthropic.client.AnthropicClient;
-import com.anthropic.core.JsonValue;
-import com.anthropic.errors.AnthropicException;
-import com.anthropic.errors.AnthropicIoException;
-import com.anthropic.errors.AnthropicServiceException;
-import com.anthropic.errors.PermissionDeniedException;
-import com.anthropic.errors.RateLimitException;
-import com.anthropic.errors.UnauthorizedException;
-import com.anthropic.models.messages.CacheControlEphemeral;
-import com.anthropic.models.messages.ContentBlock;
-import com.anthropic.models.messages.ContentBlockParam;
-import com.anthropic.models.messages.Message;
-import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.MessageParam;
-import com.anthropic.models.messages.OutputConfig;
-import com.anthropic.models.messages.StopReason;
-import com.anthropic.models.messages.TextBlockParam;
-import com.anthropic.models.messages.ToolResultBlockParam;
-import com.anthropic.models.messages.ToolUseBlock;
 import com.biblioteca.chatbot.client.BibliotecaApiClient;
+import com.biblioteca.chatbot.client.BibliotecaApiException;
 import com.biblioteca.chatbot.config.BibliotecaProperties;
-import com.biblioteca.chatbot.config.ChatProperties;
 import com.biblioteca.chatbot.exception.BadRequestException;
-import com.biblioteca.chatbot.exception.ServiceUnavailableException;
+import com.biblioteca.chatbot.model.Book;
 import com.biblioteca.chatbot.model.ChatMessage;
 import com.biblioteca.chatbot.model.ChatResponse;
 import com.biblioteca.chatbot.model.ChatStatus;
+import com.biblioteca.chatbot.model.Loan;
+import com.biblioteca.chatbot.model.LoanPage;
+import com.biblioteca.chatbot.model.Member;
+import com.biblioteca.chatbot.model.Question;
+import com.biblioteca.chatbot.model.Stats;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 /**
- * Responde preguntas en lenguaje natural consultando la biblioteca con las herramientas de
- * {@link LibraryTools}.
+ * Responde preguntas sobre la biblioteca sin IA: {@link IntentClassifier} decide qué se pregunta
+ * y aquí se consulta la API de la biblioteca y se redacta la respuesta en texto plano.
  *
- * <p>Bucle de herramientas: se envía la conversación a Claude; si responde pidiendo una
- * herramienta ({@code stop_reason = tool_use}) se ejecuta contra la API de la biblioteca, se le
- * devuelve el resultado y se vuelve a preguntar, hasta que contesta con texto o se alcanza
- * {@code chat.max-tool-rounds}.
- *
- * <p>No guarda estado entre peticiones (el cliente reenvía el historial) ni modifica datos.
+ * <p>No guarda estado entre peticiones ni modifica datos. Si la biblioteca no responde, la
+ * {@link BibliotecaApiException} llega al controlador y se devuelve un 503 con el motivo.
  */
 @Service
 public class ChatService {
 
-    /** Registro de errores (nunca se registra el contenido de las preguntas). */
-    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+    /** Elementos máximos de una lista en la respuesta (el resto se resume con «y N más»). */
+    static final int MAX_ITEMS = 10;
+    /** Préstamos que se piden a la API en una consulta. */
+    private static final int LOAN_PAGE = 100;
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
-    /** Tope de la respuesta del modelo (incluido su razonamiento interno). */
-    private static final long MAX_TOKENS = 16_000L;
-    /** Respuesta cuando el modelo declina una petición (stop_reason = refusal). */
-    static final String REFUSAL_REPLY =
-            "No puedo ayudar con esa petición. Puedo responder preguntas sobre libros, usuarios y préstamos.";
-    /** Respuesta cuando la pregunta requiere más consultas de las permitidas. */
-    static final String TOO_MANY_STEPS_REPLY =
-            "La pregunta necesitaba demasiadas consultas. Prueba a hacerla más concreta.";
-    private static final DateTimeFormatter DATE =
-            DateTimeFormatter.ofPattern("EEEE d 'de' MMMM 'de' yyyy", Locale.forLanguageTag("es"));
+    /** Texto de ayuda: qué se puede preguntar. */
+    static final String HELP = """
+            Puedo responder preguntas como:
+            - ¿Qué préstamos están vencidos?
+            - ¿Hay ejemplares disponibles de Dune?
+            - ¿Qué libros de ciencia ficción hay disponibles?
+            - ¿Qué libros tiene prestados Ana?
+            - ¿Quién tiene Cien años de soledad?
+            - ¿Quién tiene más préstamos activos?
+            - ¿Cuáles son los libros más prestados?
+            - ¿Cuánto dura un préstamo y cuándo se puede renovar?
+            - Estadísticas de la biblioteca""";
 
-    /** Cliente de Claude; solo existe si hay clave configurada (ver {@code AppConfig}). */
-    private final ObjectProvider<AnthropicClient> claude;
-    private final LibraryTools tools;
+    private final IntentClassifier classifier;
     private final BibliotecaApiClient biblioteca;
-    private final ChatProperties chat;
-    /** Reglas de préstamo: se explican al modelo para preguntas como «¿cuánto dura un préstamo?». */
+    /** Reglas de préstamo, para responder «¿cuánto dura un préstamo?». */
     private final BibliotecaProperties rules;
-    /** Reloj inyectado: el modelo necesita saber qué día es para hablar de vencimientos. */
+    /** Reloj inyectado: para calcular los días de retraso (fijo en las pruebas). */
     private final Clock clock;
 
-    /** Inyección por constructor (el cliente de Claude es opcional: sin clave se responde 503). */
-    public ChatService(ObjectProvider<AnthropicClient> claude, LibraryTools tools, BibliotecaApiClient biblioteca,
-                       ChatProperties chat, BibliotecaProperties rules, Clock clock) {
-        this.claude = claude;
-        this.tools = tools;
+    /** Inyección por constructor. */
+    public ChatService(IntentClassifier classifier, BibliotecaApiClient biblioteca, BibliotecaProperties rules,
+                       Clock clock) {
+        this.classifier = classifier;
         this.biblioteca = biblioteca;
-        this.chat = chat;
         this.rules = rules;
         this.clock = clock;
     }
 
-    /** Estado actual: si hay clave de Claude y si la biblioteca responde. */
+    /** Estado actual: si la API de la biblioteca responde. */
     public ChatStatus status() {
-        return new ChatStatus(claude.getIfAvailable() != null, biblioteca.isAvailable());
+        return new ChatStatus(biblioteca.isAvailable());
     }
 
     /**
-     * Responde al último mensaje de la conversación.
+     * Responde al último mensaje de la conversación (los anteriores no se usan: cada pregunta se
+     * interpreta por sí sola).
      *
-     * @throws BadRequestException         si el último mensaje no es del usuario
-     * @throws ServiceUnavailableException si falta la clave o la API de Claude falla
+     * @throws BadRequestException     si el último mensaje no es del usuario
+     * @throws BibliotecaApiException  si la API de la biblioteca no responde
      */
     public ChatResponse reply(List<ChatMessage> conversation) {
-        AnthropicClient api = claude.getIfAvailable();
-        if (api == null) {
-            throw new ServiceUnavailableException(
-                    "El asistente no está configurado: falta la clave de la API de Claude (ANTHROPIC_API_KEY).");
-        }
-        List<MessageParam> messages = history(conversation);
-
-        for (int round = 0; ; round++) {
-            Message response = call(api, messages);
-            // Se devuelve la respuesta completa (no solo su texto): así conserva su razonamiento
-            // y las peticiones de herramienta, que la API exige junto a sus resultados.
-            messages.add(response.toParam());
-            StopReason stop = response.stopReason().orElse(StopReason.END_TURN);
-
-            if (StopReason.TOOL_USE.equals(stop)) {
-                if (round >= chat.maxToolRounds()) {
-                    return new ChatResponse(TOO_MANY_STEPS_REPLY);
-                }
-                messages.add(runTools(response));
-                continue;
-            }
-            if (StopReason.REFUSAL.equals(stop)) {
-                return new ChatResponse(REFUSAL_REPLY);
-            }
-            String text = text(response);
-            return new ChatResponse(text.isBlank() ? "No he podido generar una respuesta. Inténtalo de nuevo." : text);
-        }
-    }
-
-    /**
-     * Convierte el historial del cliente en mensajes de la API: solo los más recientes, y
-     * empezando siempre por un mensaje del usuario (la API no admite empezar con el asistente).
-     */
-    private List<MessageParam> history(List<ChatMessage> conversation) {
         if (conversation.isEmpty() || !conversation.getLast().fromUser()) {
             throw new BadRequestException("El último mensaje de la conversación debe ser del usuario");
         }
-        List<ChatMessage> recent = conversation.subList(
-                Math.max(0, conversation.size() - chat.maxHistory()), conversation.size());
-        List<MessageParam> messages = new ArrayList<>();
-        for (ChatMessage m : recent) {
-            if (messages.isEmpty() && !m.fromUser()) {
-                continue;
-            }
-            messages.add(MessageParam.builder()
-                    .role(m.fromUser() ? MessageParam.Role.USER : MessageParam.Role.ASSISTANT)
-                    .content(m.content())
-                    .build());
-        }
-        return messages;
+        Question q = classifier.classify(conversation.getLast().content());
+        String reply = switch (q.intent()) {
+            case GREETING -> "¡Hola! Soy el asistente de la biblioteca.\n\n" + HELP;
+            case THANKS -> "¡De nada! Si necesitas algo más, pregúntame.";
+            case HELP -> HELP;
+            case RULES -> rules();
+            case ACTION -> "Solo puedo consultar datos, no modificarlos. Para prestar, devolver o renovar usa la "
+                    + "pantalla Préstamos de la aplicación de la biblioteca; para libros y usuarios, sus pantallas "
+                    + "Libros y Usuarios.";
+            case OVERDUE_LOANS -> overdueLoans(q.subject());
+            case ACTIVE_LOANS -> activeLoans();
+            case TOP_MEMBERS -> topMembers(q.activeOnly());
+            case TOP_BOOKS -> ranking("Libros más prestados", biblioteca.stats().topBooks(), "préstamo", "préstamos");
+            case GENRES -> ranking("Préstamos por género", biblioteca.stats().loansByGenre(), "préstamo", "préstamos");
+            case STATS -> stats();
+            case LIST_BOOKS -> listBooks(q.onlyAvailable());
+            case LIST_MEMBERS -> listMembers();
+            case SUBJECT_LOANS -> subjectLoans(q.subject());
+            case BOOK_SEARCH -> bookSearch(q.subject(), q.onlyAvailable());
+            case UNKNOWN -> "No he entendido la pregunta. " + HELP;
+        };
+        return new ChatResponse(reply);
     }
 
-    /**
-     * Llama a Claude y traduce sus errores a un 503 con un mensaje para el usuario. Del más
-     * concreto al más general: los límites de uso y la clave inválida tienen su propio mensaje.
-     */
-    private Message call(AnthropicClient api, List<MessageParam> messages) {
-        try {
-            return api.messages().create(params(messages));
-        } catch (RateLimitException e) {
-            log.warn("Límite de uso de la API de Claude alcanzado");
-            throw new ServiceUnavailableException("El asistente está recibiendo muchas preguntas. Espera unos segundos.");
-        } catch (UnauthorizedException | PermissionDeniedException e) {
-            log.error("La API de Claude rechazó la clave configurada (HTTP {})", e.statusCode());
-            throw new ServiceUnavailableException("La clave de la API de Claude no es válida. Revisa ANTHROPIC_API_KEY.");
-        } catch (AnthropicServiceException e) {
-            log.error("Error de la API de Claude (HTTP {}): {}", e.statusCode(), e.getMessage());
-            throw unavailable();
-        } catch (AnthropicIoException e) {
-            log.error("No se pudo conectar con la API de Claude: {}", e.getMessage());
-            throw unavailable();
-        } catch (AnthropicException e) {
-            log.error("Error inesperado del cliente de Claude", e);
-            throw unavailable();
-        }
-    }
+    // --- respuestas -----------------------------------------------------------------------
 
-    private static ServiceUnavailableException unavailable() {
-        return new ServiceUnavailableException("El asistente no está disponible en este momento. Inténtalo más tarde.");
-    }
-
-    /**
-     * Petición a Claude. Lo fijo (herramientas e instrucciones) va primero y se marca para la
-     * caché de prompts; la fecha de hoy va después, para no invalidar esa caché.
-     */
-    private MessageCreateParams params(List<MessageParam> messages) {
-        MessageCreateParams.Builder builder = MessageCreateParams.builder()
-                .model(chat.model())
-                .maxTokens(MAX_TOKENS)
-                .systemOfTextBlockParams(List.of(
-                        TextBlockParam.builder()
-                                .text(instructions())
-                                .cacheControl(CacheControlEphemeral.builder().build())
-                                .build(),
-                        TextBlockParam.builder()
-                                .text("Hoy es " + LocalDate.now(clock).format(DATE) + ".")
-                                .build()))
-                // Esfuerzo bajo: son consultas de chat, prima la rapidez de respuesta.
-                .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
-                // Si los filtros de seguridad del modelo rechazan una pregunta legítima, la API la
-                // reintenta automáticamente con otro modelo adecuado.
-                .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
-                .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
-                .messages(messages);
-        tools.definitions().forEach(builder::addTool);
-        return builder.build();
-    }
-
-    /** Instrucciones del asistente: qué es, qué puede hacer y cómo debe responder. */
-    private String instructions() {
+    private String rules() {
         return """
-                Eres el asistente del Sistema de Biblioteca. Ayudas al personal a consultar el catálogo, \
-                los usuarios y los préstamos.
-
-                Usa las herramientas para obtener los datos: no inventes libros, usuarios, fechas ni cifras. \
-                Si las herramientas no devuelven lo que se pregunta, dilo claramente. Si una herramienta \
-                indica que la biblioteca no responde, explícalo y sugiere comprobar que su servidor está en \
-                marcha. Puedes llamar a varias herramientas a la vez si la pregunta lo requiere.
-
-                Solo puedes consultar, no modificar. Si te piden prestar, devolver, renovar, dar de alta o \
-                eliminar algo, explica que debe hacerse desde la aplicación de la biblioteca (pantallas \
-                Libros, Usuarios o Préstamos).
-
-                Reglas de la biblioteca:
+                Reglas de préstamo:
                 - Cada préstamo dura %d días.
-                - Un usuario puede tener como máximo %d préstamos activos a la vez.
-                - Un usuario con préstamos vencidos no puede pedir más libros hasta devolverlos.
+                - Un usuario puede tener como máximo %d préstamos a la vez.
+                - Con algún préstamo vencido no se pueden pedir más libros hasta devolverlo.
                 - Solo se presta un libro si tiene ejemplares disponibles.
-                - Un préstamo se puede renovar cuando faltan %d días o menos para su vencimiento y no \
-                está vencido; la renovación da de nuevo el plazo completo desde ese día.
+                - Un préstamo en plazo se puede renovar cuando faltan %d días o menos para su vencimiento; \
+                la renovación da de nuevo %d días desde ese día.""".formatted(
+                rules.loanDays(), rules.maxActiveLoans(), rules.renewalWindowDays(), rules.loanDays());
+    }
 
-                Forma de responder:
-                - En español, breve y directo.
-                - Texto plano: la respuesta se muestra tal cual, sin interpretar Markdown (nada de \
-                asteriscos, almohadillas ni tablas). Para listas, una línea por elemento empezando por "- ".
-                - Fechas en formato día/mes/año (por ejemplo 15/10/2026).
-                - Los estados de préstamo se llaman "en plazo" (ACTIVE), "vencido" (OVERDUE) y "devuelto" (RETURNED).
-                """.formatted(rules.loanDays(), rules.maxActiveLoans(), rules.renewalWindowDays());
+    /** Préstamos vencidos de toda la biblioteca, o solo de un usuario o libro. */
+    private String overdueLoans(String subject) {
+        LoanPage page = biblioteca.loans("OVERDUE", subject, LOAN_PAGE);
+        if (page.totalElements() == 0) {
+            return "No hay préstamos vencidos" + (subject.isEmpty() ? "" : " que coincidan con «" + subject + "»") + ".";
+        }
+        String of = subject.isEmpty() ? ""
+                : (page.totalElements() == 1 ? " que coincide" : " que coinciden") + " con «" + subject + "»";
+        String header = "Hay " + count(page.totalElements(), "préstamo vencido", "préstamos vencidos") + of + ":";
+        return list(header, page.content(), page.totalElements(), l -> "«" + l.bookTitle() + "» – " + l.memberName()
+                + ", venció el " + date(l.dueDate()) + " (" + daysLate(l) + ")");
+    }
+
+    /** Préstamos en plazo, ordenados por la fecha de vencimiento más cercana. */
+    private String activeLoans() {
+        LoanPage page = biblioteca.loans("ACTIVE", "", LOAN_PAGE);
+        if (page.totalElements() == 0) {
+            return "No hay préstamos en plazo ahora mismo.";
+        }
+        List<Loan> sorted = page.content().stream().sorted(Comparator.comparing(Loan::dueDate)).toList();
+        String header = "Hay " + count(page.totalElements(), "préstamo en plazo", "préstamos en plazo")
+                + " (sin contar los vencidos):";
+        return list(header, sorted, page.totalElements(),
+                l -> "«" + l.bookTitle() + "» – " + l.memberName() + ", vence el " + date(l.dueDate()));
+    }
+
+    /** Usuarios con más préstamos, ahora mismo o en total según la pregunta. */
+    private String topMembers(boolean activeOnly) {
+        Function<Member, Long> key = activeOnly ? Member::activeLoans : Member::totalLoans;
+        List<Member> ranked = biblioteca.members().stream()
+                .filter(m -> key.apply(m) > 0)
+                .sorted(Comparator.comparing(key).reversed().thenComparing(Member::name))
+                .limit(5)
+                .toList();
+        if (ranked.isEmpty()) {
+            return activeOnly ? "Ahora mismo nadie tiene libros prestados." : "Todavía no hay préstamos registrados.";
+        }
+        String header = activeOnly ? "Usuarios con más préstamos sin devolver:" : "Usuarios con más préstamos en total:";
+        return list(header, ranked, ranked.size(), m -> m.name() + ": "
+                + count(key.apply(m), activeOnly ? "préstamo activo" : "préstamo", activeOnly ? "préstamos activos" : "préstamos"));
+    }
+
+    /** Ranking del panel de estadísticas (libros más prestados o préstamos por género). */
+    private String ranking(String title, List<Stats.Entry> entries, String one, String many) {
+        if (entries.isEmpty()) {
+            return "Todavía no hay préstamos registrados.";
+        }
+        return list(title + ":", entries, entries.size(), e -> e.label() + ": " + count(e.count(), one, many));
+    }
+
+    private String stats() {
+        Stats s = biblioteca.stats();
+        return """
+                Resumen de la biblioteca:
+                - %s y %s.
+                - %s, %s y %s.""".formatted(
+                count(s.totalBooks(), "título", "títulos"), count(s.totalMembers(), "usuario", "usuarios"),
+                count(s.activeLoans(), "préstamo en plazo", "préstamos en plazo"),
+                count(s.overdueLoans(), "vencido", "vencidos"),
+                count(s.returnedLoans(), "devuelto", "devueltos"));
+    }
+
+    /** Catálogo completo o solo los libros con ejemplares disponibles. */
+    private String listBooks(boolean onlyAvailable) {
+        List<Book> books = biblioteca.books("").stream()
+                .filter(b -> !onlyAvailable || b.available())
+                .toList();
+        if (books.isEmpty()) {
+            return onlyAvailable ? "Ahora mismo no queda ningún libro con ejemplares disponibles."
+                    : "El catálogo está vacío.";
+        }
+        String header = onlyAvailable
+                ? count(books.size(), "libro tiene", "libros tienen") + " ejemplares disponibles:"
+                : "El catálogo tiene " + count(books.size(), "título", "títulos") + ":";
+        return list(header, books, books.size(), ChatService::bookLine);
+    }
+
+    private String listMembers() {
+        List<Member> members = biblioteca.members();
+        if (members.isEmpty()) {
+            return "No hay usuarios registrados.";
+        }
+        return list("Hay " + count(members.size(), "usuario", "usuarios") + ":", members, members.size(),
+                m -> m.name() + " (" + count(m.activeLoans(), "préstamo activo", "préstamos activos") + ")");
     }
 
     /**
-     * Ejecuta todas las herramientas pedidas en la respuesta y devuelve sus resultados en un
-     * único mensaje (la API espera todos los resultados juntos). Un fallo se devuelve como error
-     * para que el modelo lo explique, sin cortar la conversación.
+     * «¿Qué tiene Ana?» o «¿Quién tiene Dune?»: primero se busca un usuario con ese nombre; si no
+     * hay, se busca quién tiene prestado un libro con ese título.
      */
-    private MessageParam runTools(Message response) {
-        List<ContentBlockParam> results = new ArrayList<>();
-        for (ContentBlock block : response.content()) {
-            block.toolUse().ifPresent(call -> results.add(ContentBlockParam.ofToolResult(runTool(call))));
+    private String subjectLoans(String subject) {
+        List<Member> members = findMembers(subject);
+        if (members.size() > 1) {
+            return whichMember(subject, members);
         }
-        return MessageParam.builder()
-                .role(MessageParam.Role.USER)
-                .contentOfBlockParams(results)
-                .build();
+        if (members.size() == 1) {
+            return memberLoans(members.getFirst());
+        }
+        List<Book> books = biblioteca.books(subject);
+        if (books.isEmpty()) {
+            return notFound(subject);
+        }
+        List<Loan> open = biblioteca.loans("ALL", subject, LOAN_PAGE).content().stream()
+                .filter(Loan::open)
+                .filter(l -> books.stream().anyMatch(b -> b.title().equalsIgnoreCase(l.bookTitle())))
+                .toList();
+        if (open.isEmpty()) {
+            return books.size() == 1
+                    ? "Nadie tiene prestado «" + books.getFirst().title() + "» ahora mismo. " + availability(books.getFirst())
+                    : "Ninguno de los libros que coinciden con «" + subject + "» está prestado ahora mismo.";
+        }
+        return list("Tienen prestado ahora mismo:", open, open.size(), l -> "«" + l.bookTitle() + "» – "
+                + l.memberName() + (l.overdue() ? ", vencido desde el " : ", vence el ") + date(l.dueDate()));
     }
 
-    /** Ejecuta una herramienta y empaqueta su resultado (o su error) para el modelo. */
-    @SuppressWarnings("unchecked")
-    private ToolResultBlockParam runTool(ToolUseBlock call) {
-        ToolResultBlockParam.Builder result = ToolResultBlockParam.builder().toolUseId(call.id());
-        try {
-            Map<String, Object> input = call._input().convert(Map.class);
-            return result.content(tools.execute(call.name(), input == null ? Map.of() : input)).build();
-        } catch (RuntimeException e) {
-            log.debug("Herramienta {} falló: {}", call.name(), e.getMessage());
-            return result.content("Error: " + e.getMessage()).isError(true).build();
+    /** Préstamos sin devolver de un usuario, con su total histórico. */
+    private String memberLoans(Member m) {
+        List<Loan> open = biblioteca.loans("ALL", m.name(), LOAN_PAGE).content().stream()
+                .filter(l -> l.memberName().equalsIgnoreCase(m.name()) && l.open())
+                .sorted(Comparator.comparing(Loan::dueDate))
+                .toList();
+        String history = " En total ha pedido " + count(m.totalLoans(), "préstamo", "préstamos") + ".";
+        if (open.isEmpty()) {
+            return m.name() + " no tiene libros prestados ahora mismo." + history;
         }
+        long overdue = open.stream().filter(Loan::overdue).count();
+        String header = m.name() + " tiene " + count(open.size(), "libro prestado", "libros prestados")
+                + (overdue > 0 ? " (" + count(overdue, "vencido", "vencidos") + ")" : "") + ":";
+        return list(header, open, open.size(), l -> "«" + l.bookTitle() + "»"
+                + (l.overdue() ? ", vencido desde el " + date(l.dueDate()) + " (" + daysLate(l) + ")"
+                        : ", vence el " + date(l.dueDate()))) + "\n" + history.trim();
     }
 
-    /** Une los bloques de texto de la respuesta. */
-    private static String text(Message response) {
-        return response.content().stream()
-                .flatMap(block -> block.text().stream())
-                .map(t -> t.text().strip())
-                .filter(t -> !t.isEmpty())
-                .collect(Collectors.joining("\n\n"));
+    /**
+     * Búsqueda por título, autor o género con la disponibilidad de cada libro. Si no hay libros,
+     * se prueba si es el nombre de un usuario.
+     */
+    private String bookSearch(String subject, boolean onlyAvailable) {
+        List<Book> books = biblioteca.books(subject);
+        if (books.isEmpty()) {
+            List<Member> members = findMembers(subject);
+            if (members.size() == 1) {
+                return memberLoans(members.getFirst());
+            }
+            return members.isEmpty() ? notFound(subject) : whichMember(subject, members);
+        }
+        if (books.size() == 1) {
+            Book b = books.getFirst();
+            return "«" + b.title() + "» de " + b.author() + " (" + b.genre() + "). " + availability(b);
+        }
+        List<Book> shown = onlyAvailable ? books.stream().filter(Book::available).toList() : books;
+        if (shown.isEmpty()) {
+            return "Hay " + count(books.size(), "libro", "libros") + " que coinciden con «" + subject
+                    + "», pero ninguno tiene ejemplares disponibles ahora mismo.";
+        }
+        String header = onlyAvailable
+                ? count(shown.size(), "libro disponible", "libros disponibles") + " para «" + subject + "»:"
+                : count(books.size(), "libro coincide", "libros coinciden") + " con «" + subject + "»:";
+        return list(header, shown, shown.size(), ChatService::bookLine);
+    }
+
+    // --- utilidades -----------------------------------------------------------------------
+
+    /** Usuarios cuyo nombre o correo contiene el texto (sin tildes ni mayúsculas). */
+    private List<Member> findMembers(String subject) {
+        String q = IntentClassifier.normalize(subject);
+        return biblioteca.members().stream()
+                .filter(m -> IntentClassifier.normalize(m.name()).contains(q)
+                        || IntentClassifier.normalize(m.email()).contains(q))
+                .toList();
+    }
+
+    private String whichMember(String subject, List<Member> members) {
+        return list("Hay " + count(members.size(), "usuario", "usuarios") + " que coinciden con «" + subject
+                + "». ¿Cuál de ellos?", members, members.size(), Member::name);
+    }
+
+    private static String notFound(String subject) {
+        return "No encontré libros ni usuarios que coincidan con «" + subject + "». Prueba con otra parte del "
+                + "título, el autor, el género o el nombre del usuario.";
+    }
+
+    private static String availability(Book b) {
+        if (b.available()) {
+            return "Sí hay ejemplares: " + (b.availableCopies() == 1 ? "queda " : "quedan ") + b.availableCopies()
+                    + " de " + b.totalCopies() + ".";
+        }
+        return "Ahora mismo no queda ninguno: " + (b.totalCopies() == 1 ? "su único ejemplar está prestado."
+                : "los " + b.totalCopies() + " ejemplares están prestados.");
+    }
+
+    private static String bookLine(Book b) {
+        return "«" + b.title() + "» de " + b.author() + " – "
+                + (b.available() ? b.availableCopies() + " de " + b.totalCopies() + " disponibles" : "sin ejemplares disponibles");
+    }
+
+    /** Días de retraso de un préstamo vencido, en texto. */
+    private String daysLate(Loan l) {
+        long days = ChronoUnit.DAYS.between(l.dueDate(), LocalDate.now(clock));
+        return days <= 0 ? "vence hoy" : count(days, "día", "días") + " de retraso";
+    }
+
+    /** Cabecera más una línea «- » por elemento, con un máximo de {@link #MAX_ITEMS}. */
+    private static <T> String list(String header, List<T> items, long total, Function<T, String> line) {
+        String body = items.stream().limit(MAX_ITEMS).map(i -> "- " + line.apply(i)).collect(Collectors.joining("\n"));
+        long rest = total - Math.min(items.size(), MAX_ITEMS);
+        return header + "\n" + body + (rest > 0 ? "\n- y " + rest + " más" : "");
+    }
+
+    private static String count(long n, String one, String many) {
+        return n + " " + (n == 1 ? one : many);
+    }
+
+    private static String date(LocalDate d) {
+        return d == null ? "—" : d.format(DATE);
     }
 }

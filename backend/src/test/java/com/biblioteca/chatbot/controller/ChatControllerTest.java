@@ -16,8 +16,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Endpoints con la aplicación completa arrancada, sin clave de Claude y con la biblioteca
- * apuntando a un puerto donde no hay nada (ver {@code src/test/resources/application.properties}).
+ * Endpoints con la aplicación completa arrancada y la biblioteca apuntando a un puerto donde no
+ * hay nada (ver {@code src/test/resources/application.properties}).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -26,13 +26,22 @@ class ChatControllerTest {
     @Autowired
     private MockMvc mvc;
 
-    /** Sin clave de API: 503 con un mensaje que explica qué configurar. */
+    /** Si la biblioteca no responde: 503 con un mensaje que explica qué arrancar. */
     @Test
-    void withoutApiKeyRespondsServiceUnavailable() throws Exception {
+    void unreachableBibliotecaRespondsServiceUnavailable() throws Exception {
         mvc.perform(post("/api/chat").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"messages\":[{\"role\":\"user\",\"content\":\"¿Hay libros de Dune?\"}]}"))
                 .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.message").value(containsString("ANTHROPIC_API_KEY")));
+                .andExpect(jsonPath("$.message").value(containsString("No se pudo conectar con la API de la biblioteca")));
+    }
+
+    /** Las preguntas que no necesitan datos se responden aunque la biblioteca esté apagada. */
+    @Test
+    void answersRulesWithoutBiblioteca() throws Exception {
+        mvc.perform(post("/api/chat").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"messages\":[{\"role\":\"user\",\"content\":\"¿Cuánto dura un préstamo?\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reply").value(containsString("14 días")));
     }
 
     /** Conversación vacía, rol desconocido, mensaje en blanco o que no termina en el usuario → 400. */
@@ -48,12 +57,11 @@ class ChatControllerTest {
         }
     }
 
-    /** El estado indica que falta la clave y que la biblioteca no responde. */
+    /** El estado indica que la biblioteca no responde. */
     @Test
-    void statusReportsMissingKeyAndUnreachableBiblioteca() throws Exception {
+    void statusReportsUnreachableBiblioteca() throws Exception {
         mvc.perform(get("/api/chat/status"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.claudeConfigured").value(false))
                 .andExpect(jsonPath("$.bibliotecaAvailable").value(false));
     }
 

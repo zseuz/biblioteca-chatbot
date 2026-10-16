@@ -16,6 +16,8 @@ export const SUGGESTIONS = [
   '¿Qué libros de ciencia ficción hay disponibles?',
   '¿Quién tiene más préstamos activos?',
   '¿Cuánto dura un préstamo y cuándo se puede renovar?',
+  '¿Qué libros tiene prestados Ana?',
+  'Estadísticas de la biblioteca',
 ];
 
 /**
@@ -37,8 +39,9 @@ export const SUGGESTIONS = [
             <div class="welcome-icon"><app-icon name="sparkles" [size]="26" /></div>
             <h1>¿En qué te ayudo?</h1>
             <p>
-              Pregunta por el catálogo, los usuarios o los préstamos de la biblioteca. Solo consulto
-              datos: los cambios se hacen desde la aplicación de la biblioteca.
+              Pregunta por el catálogo, los usuarios o los préstamos de la biblioteca. Escribe
+              «ayuda» para ver qué puedo responder. Solo consulto datos: los cambios se hacen desde
+              la aplicación de la biblioteca.
             </p>
             <ul class="suggestions" aria-label="Preguntas de ejemplo">
               @for (s of suggestions; track s) {
