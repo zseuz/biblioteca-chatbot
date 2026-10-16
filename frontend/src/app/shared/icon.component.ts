@@ -1,7 +1,16 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 /** Iconos disponibles. TypeScript avisa si se pide uno que no existe. */
-export type IconName = 'book-open' | 'sparkles' | 'send' | 'refresh' | 'sun' | 'moon' | 'alert';
+export type IconName =
+  | 'book-open'
+  | 'sparkles'
+  | 'send'
+  | 'refresh'
+  | 'sun'
+  | 'moon'
+  | 'alert'
+  | 'arrow-up'
+  | 'arrow-right';
 
 /** Iconos SVG propios (sin librería externa); heredan el color del texto. */
 @Component({
@@ -48,6 +57,14 @@ export type IconName = 'book-open' | 'sparkles' | 'send' | 'refresh' | 'sun' | '
         }
         @case ('moon') {
           <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+        }
+        @case ('arrow-up') {
+          <path d="M12 19V5" />
+          <path d="m5 12 7-7 7 7" />
+        }
+        @case ('arrow-right') {
+          <path d="M5 12h14" />
+          <path d="m12 5 7 7-7 7" />
         }
         @case ('alert') {
           <circle cx="12" cy="12" r="10" />

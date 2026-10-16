@@ -33,6 +33,20 @@ No distingue mayúsculas ni tildes («garcia marquez» encuentra «García Márq
 
 ---
 
+## Diseño de la interfaz
+
+Estilo **«mostrador de consultas»** de una biblioteca clásica, en lugar del chat genérico:
+
+- **Tipografía:** Fraunces para los títulos, Newsreader (serif de lectura) para los mensajes e IBM Plex Mono para las etiquetas, como en una ficha de catálogo.
+- **Color:** papel, tinta y acento rojo lacre, con un grano de papel muy sutil. El **tema oscuro** («sala de lectura») usa tonos nogal y acento cobre. Se elige con el botón de la cabecera y se recuerda en el navegador; la primera vez sigue la preferencia del sistema.
+- **Preguntas de ejemplo** como fichas de catálogo con su signatura (C·01…).
+- **Respuestas** con las listas formateadas: las líneas «- …» del backend se muestran como lista, siempre como texto y nunca como HTML.
+- Indicador de **estado del catálogo** en la cabecera, animaciones suaves (desactivadas si el sistema pide reducir movimiento) y diseño adaptado a móvil.
+
+Los colores y las fuentes están definidos como variables en `frontend/src/styles.css`.
+
+---
+
 ## Arquitectura MVC
 
 ```text
@@ -104,7 +118,7 @@ npm install
 npm start
 ```
 
-Abre **http://localhost:4201**. Si la biblioteca o el servidor del asistente no responden, la página lo indica con un aviso arriba.
+Abre **http://localhost:4201**. El indicador de la cabecera muestra si el catálogo está en línea; si la biblioteca o el servidor del asistente no responden, aparece además un aviso.
 
 ---
 
@@ -142,7 +156,7 @@ La URL del backend que usa el frontend está en `frontend/src/app/core/chat-api.
 | Proyecto | Comando | Qué cubre |
 |---|---|---|
 | Backend (65 tests) | `cd backend` y `.\mvnw.cmd test` | Interpretación de 32 preguntas de ejemplo (intención y sujeto), respuestas con la biblioteca simulada (vencidos, disponibilidad, préstamos de un usuario, quién tiene un libro, rankings, listas largas, usuarios ambiguos), cliente contra un servidor simulado (URLs, JSON, errores) y endpoints (validación, 503, estado, CORS) |
-| Frontend (10 tests) | `cd frontend` y `npm test -- --watch=false` | Estado de la conversación, errores y reintento, aviso de biblioteca caída, sugerencias, Enter / Mayús+Enter, respuesta como texto plano y nueva conversación |
+| Frontend (16 tests) | `cd frontend` y `npm test -- --watch=false` | Estado de la conversación, errores y reintento, indicador y aviso de conexión, sugerencias, Enter / Mayús+Enter (también enviando antes de que la vista se repinte), respuestas con listas pero sin interpretar HTML, troceado de respuestas en párrafos y listas, y nueva conversación |
 
 Las pruebas **nunca** llaman a la biblioteca real.
 
@@ -165,7 +179,7 @@ biblioteca-chatbot/
 └── frontend/
     └── src/app/
         ├── app.ts                  Cabecera, aviso de estado y tema
-        ├── chat/chat.component.ts  Conversación y campo de texto
+        ├── chat/                   Conversación y campo de texto; reply-blocks.pipe (párrafos y listas)
         ├── core/                   Modelos, ChatApiService (HTTP), ChatService (estado), tema
         └── shared/icon.component.ts
 ```

@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { ChatService, MAX_MESSAGE_LENGTH } from '../core/chat.service';
 import { IconComponent } from '../shared/icon.component';
+import { ReplyBlocksPipe } from './reply-blocks.pipe';
 
 /** Preguntas de ejemplo que se ofrecen con la conversación vacía. */
 export const SUGGESTIONS = [
@@ -21,32 +22,39 @@ export const SUGGESTIONS = [
 ];
 
 /**
- * Vista de la conversación: lista de mensajes y campo para escribir. Todo el estado vive en
- * {@link ChatService}; este componente solo lo muestra y le pasa lo que hace la persona.
+ * Vista de la conversación: bienvenida con preguntas de ejemplo, mensajes y campo para escribir.
+ * Todo el estado vive en {@link ChatService}; este componente solo lo muestra y le pasa lo que
+ * hace la persona.
  *
- * Las respuestas son texto plano y se muestran con interpolación normal (nunca como HTML), así
- * que un título de libro con etiquetas no puede inyectar nada en la página.
+ * Las respuestas son texto plano: {@link ReplyBlocksPipe} las trocea en párrafos y listas, y se
+ * muestran con interpolación normal (nunca como HTML), así que un título de libro con etiquetas
+ * no puede inyectar nada en la página.
  */
 @Component({
   selector: 'app-chat',
-  imports: [IconComponent],
+  imports: [IconComponent, ReplyBlocksPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div #log class="chat-log" role="log" aria-live="polite" aria-label="Conversación">
-      <div class="chat-column">
+      <div class="column">
         @if (!chat.hasMessages()) {
           <section class="welcome">
-            <div class="welcome-icon"><app-icon name="sparkles" [size]="26" /></div>
-            <h1>¿En qué te ayudo?</h1>
-            <p>
-              Pregunta por el catálogo, los usuarios o los préstamos de la biblioteca. Escribe
-              «ayuda» para ver qué puedo responder. Solo consulto datos: los cambios se hacen desde
-              la aplicación de la biblioteca.
+            <p class="label">Mostrador de consultas · Sala general</p>
+            <h1>¿Qué buscamos <em>hoy</em>?</h1>
+            <p class="lede">
+              Pregunta por el catálogo, los usuarios o los préstamos. Respondo con los datos de la
+              biblioteca al momento; escribe «ayuda» para ver todo lo que entiendo.
             </p>
-            <ul class="suggestions" aria-label="Preguntas de ejemplo">
-              @for (s of suggestions; track s) {
-                <li>
-                  <button type="button" class="suggestion" (click)="chat.send(s)">{{ s }}</button>
+            <ul class="cards" aria-label="Preguntas de ejemplo">
+              @for (s of suggestions; track s; let i = $index) {
+                <li [style.--i]="i">
+                  <button type="button" class="suggestion" (click)="chat.send(s)">
+                    <span class="call-number" aria-hidden="true">C·0{{ i + 1 }}</span>
+                    <span class="question">{{ s }}</span>
+                    <span class="go" aria-hidden="true"
+                      ><app-icon name="arrow-right" [size]="16"
+                    /></span>
+                  </button>
                 </li>
               }
             </ul>
@@ -54,30 +62,45 @@ export const SUGGESTIONS = [
         }
 
         @for (m of chat.messages(); track $index) {
-          <div class="message" [class.from-user]="m.role === 'user'">
-            @if (m.role === 'assistant') {
-              <div class="avatar" aria-hidden="true"><app-icon name="sparkles" [size]="14" /></div>
-            }
+          <article class="message" [class.from-user]="m.role === 'user'">
+            <p class="label who">{{ m.role === 'user' ? 'Tú' : 'Asistente' }}</p>
             <div class="bubble">
-              <span class="sr-only">{{ m.role === 'user' ? 'Tú:' : 'Asistente:' }}</span>
-              {{ m.content }}
+              @if (m.role === 'user') {
+                <p>{{ m.content }}</p>
+              } @else {
+                @for (b of m.content | replyBlocks; track $index) {
+                  @if (b.kind === 'list') {
+                    <ul>
+                      @for (item of b.items; track $index) {
+                        <li>{{ item }}</li>
+                      }
+                    </ul>
+                  } @else {
+                    <p>{{ b.text }}</p>
+                  }
+                }
+              }
             </div>
-          </div>
+          </article>
         }
 
         @if (chat.loading()) {
-          <div class="message">
-            <div class="avatar" aria-hidden="true"><app-icon name="sparkles" [size]="14" /></div>
-            <div class="bubble typing" aria-label="El asistente está escribiendo">
-              <span></span><span></span><span></span>
+          <article class="message">
+            <p class="label who">Asistente</p>
+            <div class="bubble typing" aria-label="El asistente está consultando el catálogo">
+              <span class="label">Consultando el catálogo</span>
+              <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
             </div>
-          </div>
+          </article>
         }
 
         @if (chat.error(); as e) {
           <div class="chat-error" role="alert">
-            <app-icon name="alert" [size]="16" />
-            <span>{{ e }}</span>
+            <app-icon name="alert" [size]="18" />
+            <div>
+              <p class="label">No se pudo responder</p>
+              <p>{{ e }}</p>
+            </div>
             <button type="button" class="retry" (click)="chat.retry()">Reintentar</button>
           </div>
         }
@@ -85,7 +108,7 @@ export const SUGGESTIONS = [
     </div>
 
     <form class="composer" (submit)="$event.preventDefault(); submit()">
-      <div class="composer-inner">
+      <div class="column composer-row">
         <label for="chat-input" class="sr-only">Escribe tu pregunta</label>
         <textarea
           #input
@@ -102,11 +125,17 @@ export const SUGGESTIONS = [
           class="send-btn"
           [disabled]="chat.loading() || !draft().trim()"
           aria-label="Enviar pregunta"
+          title="Enviar"
         >
-          <app-icon name="send" [size]="18" />
+          <app-icon name="arrow-up" [size]="20" />
         </button>
       </div>
-      <p class="hint">Enter para enviar · Mayús + Enter para un salto de línea</p>
+      <p class="column hint label">
+        <span>Enter envía · Mayús + Enter, nueva línea</span>
+        @if (draft().length > maxLength * 0.8) {
+          <span>{{ draft().length }}/{{ maxLength }}</span>
+        }
+      </p>
     </form>
   `,
   styles: `
@@ -116,170 +145,254 @@ export const SUGGESTIONS = [
       min-height: 0;
       flex: 1;
     }
-
+    .column {
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto;
+    }
     .chat-log {
       flex: 1;
       overflow-y: auto;
-      padding: 1.5rem 1rem;
+      padding: 2rem 1.25rem 1.5rem;
+      scroll-behavior: smooth;
     }
-    .chat-column {
-      max-width: 760px;
-      margin: 0 auto;
+    .chat-log > .column {
       display: flex;
       flex-direction: column;
-      gap: 0.9rem;
+      gap: 1.4rem;
     }
 
+    /* --- Bienvenida -------------------------------------------------------------------- */
     .welcome {
-      text-align: center;
-      padding: 2rem 0 1rem;
-    }
-    .welcome-icon {
-      width: 56px;
-      height: 56px;
-      margin: 0 auto 1rem;
-      border-radius: var(--radius-lg);
-      background: var(--primary-light);
-      color: var(--primary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      padding: 2.5rem 0 1rem;
+      animation: rise 0.5s ease both;
     }
     .welcome h1 {
-      margin: 0 0 0.5rem;
-      font-size: 1.6rem;
-      letter-spacing: -0.02em;
+      margin: 0.6rem 0 0.75rem;
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: clamp(2.3rem, 6vw, 3.6rem);
+      line-height: 1.02;
+      letter-spacing: -0.025em;
+      font-variation-settings: 'opsz' 144;
     }
-    .welcome p {
-      margin: 0 auto 1.5rem;
-      max-width: 520px;
-      color: var(--muted);
+    .welcome h1 em {
+      color: var(--accent);
+      font-weight: 400;
     }
-    .suggestions {
+    .lede {
+      margin: 0 0 2rem;
+      max-width: 34rem;
+      color: var(--ink-soft);
+      font-size: 1.08rem;
+    }
+    .cards {
       list-style: none;
       margin: 0;
       padding: 0;
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 0.6rem;
+      gap: 0.85rem;
     }
-    .suggestion {
-      width: 100%;
-      height: 100%;
-      text-align: left;
-      padding: 0.8rem 1rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      background: var(--surface);
-      box-shadow: var(--shadow-sm);
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: border-color 0.15s ease;
-    }
-    .suggestion:hover {
-      border-color: var(--primary);
-      color: var(--primary);
+    .cards li {
+      animation: rise 0.45s ease both;
+      animation-delay: calc(0.12s + var(--i) * 0.05s);
     }
 
+    /* Ficha de catálogo: signatura arriba, pregunta y el agujero del fichero abajo. */
+    .suggestion {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 6.2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.45rem;
+      padding: 0.85rem 1rem 1.35rem;
+      text-align: left;
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-top: 3px solid var(--rule-strong);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
+      cursor: pointer;
+      transition:
+        transform 0.18s ease,
+        border-color 0.18s ease;
+    }
+    .suggestion::after {
+      content: '';
+      position: absolute;
+      bottom: 0.45rem;
+      left: 50%;
+      width: 9px;
+      height: 9px;
+      margin-left: -4.5px;
+      border-radius: 50%;
+      background: var(--paper);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    .suggestion:hover {
+      transform: translateY(-3px) rotate(-0.4deg);
+      border-top-color: var(--accent);
+    }
+    .call-number {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+    }
+    .question {
+      font-size: 1.04rem;
+      line-height: 1.35;
+      padding-right: 1.5rem;
+    }
+    .go {
+      position: absolute;
+      right: 0.85rem;
+      top: 0.8rem;
+      color: var(--accent);
+      opacity: 0;
+      transform: translateX(-4px);
+      transition: 0.18s ease;
+    }
+    .suggestion:hover .go,
+    .suggestion:focus-visible .go {
+      opacity: 1;
+      transform: none;
+    }
+
+    /* --- Mensajes ---------------------------------------------------------------------- */
     .message {
       display: flex;
-      align-items: flex-end;
-      gap: 0.5rem;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.3rem;
+      animation: rise 0.3s ease both;
     }
     .message.from-user {
-      justify-content: flex-end;
+      align-items: flex-end;
     }
-    .avatar {
-      width: 28px;
-      height: 28px;
-      flex-shrink: 0;
-      border-radius: var(--radius-full);
-      background: var(--primary-light);
-      color: var(--primary);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .who {
+      margin: 0;
     }
     .bubble {
-      max-width: min(85%, 620px);
-      padding: 0.7rem 0.95rem;
-      border-radius: var(--radius-lg);
-      border-bottom-left-radius: var(--radius-xs);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      line-height: 1.55;
-      /* Respeta los saltos de línea de las listas del asistente. */
-      white-space: pre-wrap;
+      max-width: min(88%, 640px);
+      padding: 0.85rem 1.1rem;
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
       overflow-wrap: anywhere;
     }
+    .bubble p {
+      margin: 0;
+      white-space: pre-line;
+    }
+    .bubble p + p,
+    .bubble ul + p,
+    .bubble p + ul {
+      margin-top: 0.55rem;
+    }
+    .bubble ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .bubble li {
+      position: relative;
+      padding: 0.32rem 0 0.32rem 1.1rem;
+      border-bottom: 1px dashed var(--rule);
+    }
+    .bubble li:last-child {
+      border-bottom: 0;
+    }
+    .bubble li::before {
+      content: '';
+      position: absolute;
+      left: 0.1rem;
+      top: 0.95em;
+      width: 5px;
+      height: 5px;
+      background: var(--accent);
+      transform: rotate(45deg);
+    }
     .from-user .bubble {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: var(--primary-text);
-      border-radius: var(--radius-lg);
-      border-bottom-right-radius: var(--radius-xs);
+      background: var(--user-bg);
+      color: var(--user-ink);
+      border-color: var(--user-bg);
+      border-left-width: 1px;
+      font-style: italic;
     }
 
     .typing {
       display: flex;
-      gap: 0.3rem;
-      padding: 0.85rem 1rem;
+      align-items: center;
+      gap: 0.6rem;
     }
-    .typing span {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--muted);
-      animation: blink 1.2s infinite ease-in-out;
+    .dots {
+      display: inline-flex;
+      gap: 4px;
     }
-    .typing span:nth-child(2) {
+    .dots i {
+      width: 5px;
+      height: 5px;
+      background: var(--accent);
+      transform: rotate(45deg);
+      animation: blink 1.1s infinite ease-in-out;
+    }
+    .dots i:nth-child(2) {
       animation-delay: 0.15s;
     }
-    .typing span:nth-child(3) {
+    .dots i:nth-child(3) {
       animation-delay: 0.3s;
-    }
-    @keyframes blink {
-      0%,
-      80%,
-      100% {
-        opacity: 0.3;
-      }
-      40% {
-        opacity: 1;
-      }
     }
 
     .chat-error {
       display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.7rem 0.9rem;
-      border-radius: var(--radius-md);
-      background: var(--danger-light);
-      border: 1px solid var(--danger-border);
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.85rem 1rem;
+      background: var(--danger-wash);
+      border: 1px solid var(--danger);
+      border-left-width: 3px;
+      border-radius: var(--radius);
       color: var(--danger);
-      font-size: 0.9rem;
     }
-    .chat-error span {
+    .chat-error > div {
       flex: 1;
     }
+    .chat-error p {
+      margin: 0;
+    }
+    .chat-error .label {
+      color: inherit;
+    }
     .retry {
-      border: 0;
+      padding: 0.35rem 0.75rem;
+      border: 1px solid currentColor;
+      border-radius: var(--radius);
       background: transparent;
-      font-weight: 700;
-      text-decoration: underline;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       cursor: pointer;
-      padding: 0.2rem 0.3rem;
+    }
+    .retry:hover {
+      background: var(--danger);
+      color: var(--card);
     }
 
+    /* --- Campo de escritura ------------------------------------------------------------ */
     .composer {
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      padding: 0.85rem 1rem 0.6rem;
+      padding: 0.9rem 1.25rem 0.7rem;
+      background: var(--paper-deep);
+      border-top: 3px double var(--rule-strong);
     }
-    .composer-inner {
-      max-width: 760px;
-      margin: 0 auto;
+    .composer-row {
       display: flex;
       align-items: flex-end;
       gap: 0.6rem;
@@ -287,54 +400,91 @@ export const SUGGESTIONS = [
     textarea {
       flex: 1;
       resize: none;
-      min-height: 46px;
-      max-height: 160px;
-      padding: 0.7rem 0.9rem;
-      border: 1px solid var(--border-strong);
-      border-radius: var(--radius-md);
-      background: var(--bg);
-      color: var(--text);
+      min-height: 50px;
+      max-height: 170px;
+      padding: 0.75rem 0.95rem;
+      border: 1px solid var(--rule-strong);
+      border-radius: var(--radius);
+      background: var(--card);
+      color: var(--ink);
       font: inherit;
       field-sizing: content;
     }
+    textarea::placeholder {
+      color: var(--ink-faint);
+      font-style: italic;
+    }
     textarea:focus {
       outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px var(--primary-light);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-wash);
     }
     .send-btn {
-      width: 46px;
-      height: 46px;
+      width: 50px;
+      height: 50px;
       flex-shrink: 0;
       border: 0;
-      border-radius: var(--radius-md);
-      background: var(--primary);
-      color: var(--primary-text);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      border-radius: var(--radius);
+      background: var(--accent);
+      color: var(--accent-ink);
+      display: grid;
+      place-items: center;
       cursor: pointer;
+      transition:
+        background 0.15s ease,
+        transform 0.15s ease;
     }
     .send-btn:hover:not(:disabled) {
-      background: var(--primary-hover);
+      background: var(--accent-hover);
+      transform: translateY(-1px);
     }
     .send-btn:disabled {
-      opacity: 0.45;
+      opacity: 0.35;
       cursor: default;
     }
     .hint {
-      max-width: 760px;
-      margin: 0.4rem auto 0;
-      font-size: 0.75rem;
-      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.45rem;
+      margin-bottom: 0;
+      font-size: 0.62rem;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+    }
+    @keyframes blink {
+      0%,
+      80%,
+      100% {
+        opacity: 0.25;
+      }
+      40% {
+        opacity: 1;
+      }
     }
 
     @media (max-width: 640px) {
-      .welcome h1 {
-        font-size: 1.35rem;
+      .chat-log {
+        padding: 1.25rem 1rem;
       }
-      .suggestions {
+      .welcome {
+        padding-top: 1rem;
+      }
+      .cards {
         grid-template-columns: 1fr;
+      }
+      .suggestion {
+        min-height: 0;
+      }
+      .bubble {
+        max-width: 94%;
+      }
+      .composer {
+        padding: 0.7rem 1rem;
       }
       .hint {
         display: none;
@@ -354,13 +504,15 @@ export class ChatComponent {
   private readonly input = viewChild.required<ElementRef<HTMLTextAreaElement>>('input');
 
   constructor() {
-    // Tras pintar un mensaje nuevo (o el indicador de escritura) se baja hasta el final.
+    // Tras pintar un mensaje nuevo (o el indicador de escritura) se baja hasta el final. Con la
+    // conversación vacía se queda arriba, para que la bienvenida se lea desde el principio.
     afterRenderEffect(() => {
+      const hasMessages = this.chat.hasMessages();
       this.chat.messages();
       this.chat.loading();
       this.chat.error();
       const log = this.log().nativeElement;
-      log.scrollTop = log.scrollHeight;
+      log.scrollTop = hasMessages ? log.scrollHeight : 0;
     });
   }
 
@@ -376,9 +528,15 @@ export class ChatComponent {
     this.submit();
   }
 
-  /** Envía lo escrito y vacía el campo si se aceptó. */
+  /**
+   * Envía lo escrito y vacía el campo si se aceptó. Se lee y se vacía también el propio
+   * elemento: si se escribe (o pega) y se pulsa Enter antes de que Angular repinte, el enlace
+   * [value] no detecta el cambio y el texto se quedaría en el campo.
+   */
   submit(): void {
-    if (this.chat.send(this.draft())) {
+    const field = this.input().nativeElement;
+    if (this.chat.send(field.value || this.draft())) {
+      field.value = '';
       this.draft.set('');
     }
   }
