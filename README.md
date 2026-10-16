@@ -1,6 +1,8 @@
 # Asistente de la Biblioteca
 
-Chatbot que responde preguntas escritas en español sobre el **Sistema de Biblioteca**: *«¿qué préstamos están vencidos?»*, *«¿quedan ejemplares de Dune?»*, *«¿qué libros tiene prestados Ana?»*. Consulta los datos reales a través de la API REST de la biblioteca.
+Chatbot que responde preguntas escritas en español sobre el **Sistema de Biblioteca** ([zseuz/biblioteca](https://github.com/zseuz/biblioteca)): *«¿qué préstamos están vencidos?»*, *«¿quedan ejemplares de Dune?»*, *«¿qué libros tiene prestados Ana?»*. Consulta los datos reales a través de la API REST de la biblioteca.
+
+> **Este proyecto depende de [zseuz/biblioteca](https://github.com/zseuz/biblioteca) para funcionar:** el chatbot no tiene base de datos propia y toma todos los datos de la API de ese proyecto, que debe estar en marcha en el puerto 8080.
 
 **No usa IA ni servicios de pago:** interpreta cada pregunta con reglas de palabras clave, así que es gratis, responde al instante y funciona sin internet. **Solo consulta**: no presta, devuelve ni modifica nada.
 
@@ -8,7 +10,7 @@ Chatbot que responde preguntas escritas en español sobre el **Sistema de Biblio
 |---|---|---|
 | Frontend (vista) | Angular 22 | 4201 |
 | Backend (modelo y controladores) | Spring Boot 4.1 (Spring MVC), Java 21 | 8081 |
-| Datos | API del proyecto `biblioteca` (el chatbot no tiene base de datos propia) | 8080 |
+| Datos | API del proyecto [zseuz/biblioteca](https://github.com/zseuz/biblioteca) (el chatbot no tiene base de datos propia) | 8080 |
 
 ---
 
@@ -84,7 +86,11 @@ Para añadir un tipo de pregunta nuevo: añade un valor a `Intent`, una regla en
 
 - **JDK 21 o superior** (`java -version`).
 - **Node 22.22+ LTS o 24.15+** (`node -v`).
-- El proyecto **`biblioteca`** en marcha (su backend en el puerto 8080).
+- El proyecto **[zseuz/biblioteca](https://github.com/zseuz/biblioteca)** descargado y en marcha (su backend en el puerto 8080). Si aún no lo tienes, clónalo junto a este:
+
+  ```bash
+  git clone https://github.com/zseuz/biblioteca.git
+  ```
 
 ---
 
@@ -92,7 +98,7 @@ Para añadir un tipo de pregunta nuevo: añade un valor a `Intent`, una regla en
 
 Necesitas tres terminales.
 
-**Terminal 1 — API de la biblioteca** (desde la carpeta `biblioteca/backend`):
+**Terminal 1 — API de la biblioteca** (desde la carpeta `biblioteca/backend` del proyecto [zseuz/biblioteca](https://github.com/zseuz/biblioteca)):
 
 ```bash
 .\mvnw.cmd spring-boot:run
